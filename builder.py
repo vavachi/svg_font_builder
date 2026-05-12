@@ -40,7 +40,9 @@ def generate_font_and_dart(svg_paths, font_name, class_name, output_dir, progres
         ]
         
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            # On Windows, npx is technically npx.cmd so we need shell=True to find it
+            use_shell = os.name == 'nt'
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, shell=use_shell)
             if progress_callback:
                 progress_callback("Fantasticon executed successfully.")
         except subprocess.CalledProcessError as e:

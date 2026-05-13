@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
-def generate_font_and_dart(svg_paths, font_name, class_name, output_dir, progress_callback=None):
+def generate_font_and_dart(svg_paths, font_name, class_name, output_dir, font_height=512, normalize=True, progress_callback=None):
     """
     Generates a TrueType font (.ttf) from a list of SVGs and creates a 
     corresponding Flutter Icons class in Dart.
@@ -36,8 +36,16 @@ def generate_font_and_dart(svg_paths, font_name, class_name, output_dir, progres
             str(temp_svg_dir),
             "-o", str(temp_output_dir),
             "-n", font_name,
-            "-t", "ttf"
+            "-t", "ttf",
+            "--font-height", str(font_height)
         ]
+        
+        if normalize:
+            cmd.append("--normalize")
+            cmd.append("true")
+        else:
+            cmd.append("--normalize")
+            cmd.append("false")
         
         try:
             # On Windows, npx is technically npx.cmd so we need shell=True to find it

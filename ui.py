@@ -2,9 +2,12 @@ import sys
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QLineEdit, QPushButton, QListWidget, 
-    QFileDialog, QMessageBox, QTextEdit, QFrame
+    QFileDialog, QMessageBox, QTextEdit, QFrame,
+    QTabWidget, QScrollArea, QGridLayout, QSpinBox,
+    QCheckBox
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
+from PyQt6.QtSvgWidgets import QSvgWidget
 from pathlib import Path
 
 from builder import generate_font_and_dart
@@ -13,12 +16,14 @@ class BuildThread(QThread):
     progress = pyqtSignal(str)
     finished = pyqtSignal(bool, str)
     
-    def __init__(self, svg_paths, font_name, class_name, output_dir):
+    def __init__(self, svg_paths, font_name, class_name, output_dir, font_height, normalize):
         super().__init__()
         self.svg_paths = svg_paths
         self.font_name = font_name
         self.class_name = class_name
         self.output_dir = output_dir
+        self.font_height = font_height
+        self.normalize = normalize
 
     def run(self):
         try:
@@ -27,6 +32,8 @@ class BuildThread(QThread):
                 self.font_name,
                 self.class_name,
                 self.output_dir,
+                self.font_height,
+                self.normalize,
                 lambda msg: self.progress.emit(msg)
             )
             self.finished.emit(True, "Process completed successfully!")
@@ -34,11 +41,33 @@ class BuildThread(QThread):
             self.finished.emit(False, str(e))
 
 
+class IconGalleryItem(QWidget):
+    def __init__(self, svg_path):
+        super().__init__()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(5, 5, 5, 5)
+        self.setLayout(layout)
+        
+        self.svg_widget = QSvgWidget(svg_path)
+        self.svg_widget.setFixedSize(64, 64)
+        layout.addWidget(self.svg_widget, 0, Qt.AlignmentFlag.AlignCenter)
+        
+        name = Path(svg_path).name
+        label = QLabel(name)
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setStyleSheet("font-size: 10px; color: #555;")
+        label.setMaximumWidth(80)
+        layout.addWidget(label)
+        
+        self.setFixedSize(100, 110)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Flutter SVG Font Builder")
-        self.resize(800, 600)
+        self.resize(900, 700)
         self.setAcceptDrops(True)
         self.setStyleSheet("""
             QMainWindow {
@@ -56,7 +85,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 background-color: #e0e0e0;
             }
-            QLineEdit {
+            QLineEdit, QSpinBox {
                 padding: 8px;
                 border: 1px solid #ccc;
                 border-radius: 4px;
@@ -67,6 +96,22 @@ class MainWindow(QMainWindow):
                 background-color: #fff;
                 font-size: 14px;
             }
+            QTabWidget::pane {
+                border: 1px solid #ccc;
+                background: white;
+                border-radius: 4px;
+            }
+            QTabBar::tab {
+                background: #e1e1e1;
+                border: 1px solid #ccc;
+                padding: 10px 20px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: white;
+                border-bottom-color: white;
+            }
         """)
         
         self.svg_paths = set()
@@ -74,28 +119,39 @@ class MainWindow(QMainWindow):
         # Central widget
         central = QWidget()
         self.setCentralWidget(central)
-        
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-        central.setLayout(layout)
+        main_layout = QVBoxLayout()
+        central.setLayout(main_layout)
         
         # Header
+        header = QWidget()
+        header_layout = QVBoxLayout()
+        header.setLayout(header_layout)
         title = QLabel("SVG to Flutter Font Builder")
         title.setStyleSheet("font-size: 24px; font-weight: bold; color: #333;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
+        header_layout.addWidget(title)
         
-        # Info label
         info = QLabel("Drag and drop your SVG files into the area below.")
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         info.setStyleSheet("color: #666;")
-        layout.addWidget(info)
+        header_layout.addWidget(info)
+        main_layout.addWidget(header)
         
-        # Drop Area / List
+        # Tabs
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+        
+        # --- TAB 1: GENERATOR ---
+        self.tab_generator = QWidget()
+        self.tabs.addTab(self.tab_generator, "Generator")
+        gen_layout = QVBoxLayout()
+        self.tab_generator.setLayout(gen_layout)
+        
+        # List Area
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.list_widget.setAlternatingRowColors(True)
+        gen_layout.addWidget(self.list_widget, 1)
         
         list_controls = QHBoxLayout()
         self.add_btn = QPushButton("Add SVGs")
@@ -112,62 +168,67 @@ class MainWindow(QMainWindow):
         list_controls.addWidget(self.add_folder_btn)
         list_controls.addWidget(self.remove_btn)
         list_controls.addWidget(self.clear_btn)
-        
-        layout.addWidget(self.list_widget, 1) # Give it stretch factor 1
-        layout.addLayout(list_controls)
+        gen_layout.addLayout(list_controls)
         
         # Divider
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(line)
+        gen_layout.addWidget(line)
         
         # Settings
-        settings_layout = QVBoxLayout()
-        settings_title = QLabel("Tool Settings")
-        settings_title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        settings_layout.addWidget(settings_title)
+        settings_grid = QGridLayout()
         
-        # Font Name
-        row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Font Family Name:"))
+        # Row 1: Font Name
+        settings_grid.addWidget(QLabel("Font Family Name:"), 0, 0)
         self.font_name_input = QLineEdit("MyIcons")
-        row1.addWidget(self.font_name_input)
-        settings_layout.addLayout(row1)
+        settings_grid.addWidget(self.font_name_input, 0, 1)
         
-        # Class Name
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Flutter Class Name:"))
+        # Row 2: Class Name
+        settings_grid.addWidget(QLabel("Flutter Class Name:"), 1, 0)
         self.class_name_input = QLineEdit("MyIcons")
-        row2.addWidget(self.class_name_input)
-        settings_layout.addLayout(row2)
+        settings_grid.addWidget(self.class_name_input, 1, 1)
         
-        # Output Dir
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Output Directory:"))
+        # Row 3: Output Dir
+        settings_grid.addWidget(QLabel("Output Directory:"), 2, 0)
+        dir_layout = QHBoxLayout()
         self.output_dir_input = QLineEdit(str(Path.home() / "Desktop" / "FlutterIcons"))
         self.output_dir_btn = QPushButton("Browse")
         self.output_dir_btn.clicked.connect(self.browse_output_dir)
-        row3.addWidget(self.output_dir_input)
-        row3.addWidget(self.output_dir_btn)
-        settings_layout.addLayout(row3)
+        dir_layout.addWidget(self.output_dir_input)
+        dir_layout.addWidget(self.output_dir_btn)
+        settings_grid.addLayout(dir_layout, 2, 1)
         
-        layout.addLayout(settings_layout)
+        # Row 4: Font Height & Normalize
+        settings_grid.addWidget(QLabel("Font Height:"), 3, 0)
+        h_layout = QHBoxLayout()
+        self.font_height_input = QSpinBox()
+        self.font_height_input.setRange(64, 2048)
+        self.font_height_input.setValue(512)
+        h_layout.addWidget(self.font_height_input)
+        
+        self.normalize_check = QCheckBox("Normalize Icon Sizes")
+        self.normalize_check.setChecked(True)
+        h_layout.addWidget(self.normalize_check)
+        h_layout.addStretch()
+        settings_grid.addLayout(h_layout, 3, 1)
+        
+        gen_layout.addLayout(settings_grid)
         
         # Log
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setFixedHeight(100)
-        self.log_output.setStyleSheet("background-color: #222; color: #0f0; font-family: monospace; font-size: 12px;")
-        layout.addWidget(self.log_output)
+        self.log_output.setFixedHeight(80)
+        self.log_output.setStyleSheet("background-color: #222; color: #0f0; font-family: monospace; font-size: 11px;")
+        gen_layout.addWidget(self.log_output)
         
-        # Generate
+        # Generate Button
         self.generate_btn = QPushButton("Generate Flutter Font")
         self.generate_btn.setStyleSheet("""
             QPushButton {
                 font-size: 16px; 
                 font-weight: bold; 
-                padding: 15px; 
+                padding: 12px; 
                 background-color: #2196F3; 
                 color: white;
                 border: none;
@@ -181,8 +242,23 @@ class MainWindow(QMainWindow):
             }
         """)
         self.generate_btn.clicked.connect(self.generate)
-        layout.addWidget(self.generate_btn)
+        gen_layout.addWidget(self.generate_btn)
         
+        # --- TAB 2: ICON GALLERY ---
+        self.tab_gallery = QWidget()
+        self.tabs.addTab(self.tab_gallery, "Icon Gallery")
+        gallery_layout = QVBoxLayout()
+        self.tab_gallery.setLayout(gallery_layout)
+        
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.gallery_content = QWidget()
+        self.gallery_grid = QGridLayout()
+        self.gallery_grid.setSpacing(10)
+        self.gallery_content.setLayout(self.gallery_grid)
+        self.scroll_area.setWidget(self.gallery_content)
+        gallery_layout.addWidget(self.scroll_area)
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.accept()
@@ -196,19 +272,42 @@ class MainWindow(QMainWindow):
             if p.suffix.lower() == '.svg':
                 self.svg_paths.add(str(p))
                 
+        self.refresh_ui()
+
+    def refresh_ui(self):
         self.refresh_list()
+        self.refresh_gallery()
 
     def refresh_list(self):
         self.list_widget.clear()
         for p in sorted(self.svg_paths):
             self.list_widget.addItem(p)
 
+    def refresh_gallery(self):
+        # Clear existing items
+        while self.gallery_grid.count():
+            item = self.gallery_grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        
+        # Add new items
+        cols = 6
+        for i, p in enumerate(sorted(self.svg_paths)):
+            row = i // cols
+            col = i % cols
+            item_widget = IconGalleryItem(p)
+            self.gallery_grid.addWidget(item_widget, row, col)
+        
+        # Add a stretch item to push everything up
+        self.gallery_grid.setRowStretch(self.gallery_grid.rowCount(), 1)
+
     def add_svgs(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select SVG files", "", "SVG Files (*.svg)")
         if files:
             for f in files:
                 self.svg_paths.add(f)
-            self.refresh_list()
+            self.refresh_ui()
 
     def add_folder(self):
         directory = QFileDialog.getExistingDirectory(self, "Select SVG Folder")
@@ -218,7 +317,7 @@ class MainWindow(QMainWindow):
                 self.svg_paths.add(str(f))
             for f in path.rglob("*.SVG"):
                 self.svg_paths.add(str(f))
-            self.refresh_list()
+            self.refresh_ui()
 
     def remove_svgs(self):
         selected = self.list_widget.selectedItems()
@@ -226,11 +325,11 @@ class MainWindow(QMainWindow):
             return
         for item in selected:
             self.svg_paths.discard(item.text())
-        self.refresh_list()
+        self.refresh_ui()
 
     def clear_svgs(self):
         self.svg_paths.clear()
-        self.refresh_list()
+        self.refresh_ui()
         
     def browse_output_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Output Directory", self.output_dir_input.text())
@@ -265,7 +364,9 @@ class MainWindow(QMainWindow):
             list(self.svg_paths),
             self.font_name_input.text().strip(),
             self.class_name_input.text().strip(),
-            self.output_dir_input.text().strip()
+            self.output_dir_input.text().strip(),
+            self.font_height_input.value(),
+            self.normalize_check.isChecked()
         )
         self.thread.progress.connect(self.log)
         self.thread.finished.connect(self.on_generate_finished)
@@ -279,3 +380,4 @@ class MainWindow(QMainWindow):
         else:
             self.log(">> Error: " + msg)
             QMessageBox.critical(self, "Error", msg)
+
